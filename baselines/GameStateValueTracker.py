@@ -144,7 +144,6 @@ class GameStateValueTracker:
         """
         Resets the tracker's state for a new episode.
         """
-    def reset(self):
         for name in self._val_config.keys():
             default_value = self._val_config[name].default_value
             self._values[name]['current'] = default_value
