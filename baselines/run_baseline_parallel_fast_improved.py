@@ -141,7 +141,7 @@ if __name__ == '__main__':
         model = PPO('CnnPolicy', env, verbose=1, n_steps=config['ep_length'] // config['ep_updates'], batch_size=128, n_epochs=3, gamma=0.998, tensorboard_log=sess_path)
 
     only_run_and_save_video = False
-    if only_run_and_save_video or args['only_video']:
+    if only_run_and_save_video or args.only_video:
         for _ in range(learn_steps):
             obs = env.reset()
             done = [False] * n_envs
