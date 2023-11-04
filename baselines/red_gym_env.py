@@ -238,8 +238,8 @@ class RedGymEnv(Env):
                 'op_lvl': RewardCfg(reward_per_value = 0.2),
                 'dead': RewardCfg(reward_per_value = -0.1),
                 'badge': RewardCfg(reward_per_value = 20),
-                'explore_pos': RewardCfg(reward_per_value = self.explore_reward_scale),
-                'explore_knn': RewardCfg(reward_per_value = self.explore_reward_scale),
+                'explore_pos': RewardCfg(reward_per_value = 4 * self.explore_reward_scale),
+                'explore_knn': RewardCfg(reward_per_value = 4 * self.explore_reward_scale),
                 }
             )
 
