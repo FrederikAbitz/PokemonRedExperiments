@@ -198,7 +198,7 @@ class RedGymEnv(Env):
             'map_id': ValueCfg(data_type=int, default_value=0),
             'money': ValueCfg(data_type=int),
             'party_size': ValueCfg(data_type=int, metrics={
-                'changed?': lambda curr, prev, metric, count: curr != prev
+                'changed?': lambda curr, prev, metric_prev, count: curr != prev
                 }),
             'party_levels': ValueCfg(data_type=tuple),
             'party_hp_max': ValueCfg(data_type=tuple),
