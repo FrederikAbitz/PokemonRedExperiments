@@ -409,8 +409,8 @@ class RedGymEnv(Env):
         read_hp = lambda start_addr: 256 * self.read_m(start_addr) + self.read_m(start_addr + 1)
 
         # Register HP details for party
-        party_hp_max = tuple(read_hp(addr) for addr in range(0xD16C, 0xD16C + 12, 2))
-        party_hp_curr = tuple(read_hp(addr) for addr in range(0xD18D, 0xD18D + 12, 2))
+        party_hp_max = tuple(read_hp(addr) for addr in [0xD18D, 0xD1B9, 0xD1E5, 0xD211, 0xD23D, 0xD269])
+        party_hp_curr = tuple(read_hp(addr) for addr in [0xD16C, 0xD198, 0xD1C4, 0xD1F0, 0xD21C, 0xD248])
         self.state_tracker.register_value('party_hp_max', party_hp_max)
         self.state_tracker.register_value('party_hp_curr', party_hp_curr)
 
