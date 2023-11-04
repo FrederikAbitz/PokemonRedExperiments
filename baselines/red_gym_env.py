@@ -201,6 +201,7 @@ class RedGymEnv(Env):
                 'changed?': lambda curr, prev, metric_prev, count: curr != prev
                 }),
             'party_levels': ValueCfg(data_type=tuple),
+            'opponent_party_levels': ValueCfg(data_type=tuple, default_value=5),
             'party_hp_max': ValueCfg(data_type=tuple),
             'party_hp_curr': ValueCfg(data_type=tuple),
             'party_hp_fraction': ValueCfg(data_type=float),
@@ -405,6 +406,10 @@ class RedGymEnv(Env):
         party_levels = tuple(max(self.read_m(addr), 0) for addr in [0xD18C, 0xD1B8, 0xD1E4, 0xD210, 0xD23C, 0xD268])
         self.state_tracker.register_value('party_levels', party_levels)
 
+        # Register opponent party levels
+        opponent_party_levels = tuple(max(self.read_m(addr), 0) for addr in [0xD8C5, 0xD8F1, 0xD91D, 0xD949, 0xD975, 0xD9A1])
+        self.state_tracker.register_value('opponent_party_levels', opponent_party_levels)
+
         # Helper function to read HP using the formula from read_hp method
         read_hp = lambda start_addr: 256 * self.read_m(start_addr) + self.read_m(start_addr + 1)
 
@@ -442,8 +447,8 @@ class RedGymEnv(Env):
         self.rewards.register_absolute('level', levels_for_reward, decrease_allowed=False)
 
         # Max opponent level reward
-        opponent_level = max([self.read_m(a) for a in [0xD8C5, 0xD8F1, 0xD91D, 0xD949, 0xD975, 0xD9A1]]) - 5
-        self.rewards.register_absolute('op_level', opponent_level, decrease_allowed=False)
+        opponent_level = max(self.state_tracker.curr('opponent_party_levels')) - 5
+        self.rewards.register_absolute('op_lvl', opponent_level, decrease_allowed=False)
 
         # Exploration (screen k-NN) reward
         if self.use_knn_exploration_reward:
