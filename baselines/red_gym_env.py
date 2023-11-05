@@ -233,7 +233,7 @@ class RedGymEnv(Env):
             scale = self.reward_scale * 0.1,
             rew_config = {
                 'event': RewardCfg(reward_per_value = 4),
-                'level': RewardCfg(base_value = 6),
+                'level': RewardCfg(reward_per_value = 2.0, base_value = 6),
                 'heal': RewardCfg(reward_per_value = 4),
                 'op_lvl': RewardCfg(reward_per_value = 0.2),
                 'dead': RewardCfg(reward_per_value = -0.1),
@@ -440,11 +440,8 @@ class RedGymEnv(Env):
         # self.rewards.register_absolute('hp_fraction', self.state_tracker.curr('party_hp_fraction'))
 
         # Levels reward
-        lvl_threshold = 28
-        excess_lvl_factor = .25
-        lvl_sum = sum(self.state_tracker.curr("party_levels"))
-        levels_for_reward = min(lvl_sum, lvl_threshold) + excess_lvl_factor * max(0, lvl_sum - lvl_threshold)
-        self.rewards.register_absolute('level', levels_for_reward, decrease_allowed=False)
+        levels_reward = sqrt(sum([lvl**2 for lvl in self.state_tracker.curr('party_levels')]))
+        self.rewards.register_absolute('level', levels_reward)
 
         # Max opponent level reward
         opponent_level = max(self.state_tracker.curr('opponent_party_levels')) - 5
