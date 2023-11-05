@@ -29,6 +29,7 @@ from ScreenKnnExplorationRewarder import ScreenEnnExplorationRewarder
 from GamePositionExplorationRewarder import GamePositionExplorationRewarder
 from RewardTracker import RewardCfg, RewardTracker
 from GameStateValueTracker import GameStateValueTracker, ValueCfg
+from Party import Party
 
 
 MAP_LOCATIONS = {
@@ -175,15 +176,20 @@ class RedGymEnv(Env):
         self.bars_lvl_hp_explore_heigt = 8
         self.memory_height = 8
         self.map_tracker_height = self.lowres_frame_shape[0]  # Height of the MapTracker (movement + presence view)
+        self.gs_observation_height = 16
 
-        # Height of the observation space
-        obs_height = (self.map_tracker_height + self.mem_padding + 
+        # Height of right side components
+        right_side_height = (self.map_tracker_height + self.mem_padding + 
                             self.memory_height + self.mem_padding + 
-                            self.bars_lvl_hp_explore_heigt + self.mem_padding + 
-                            self.lowres_frame_shape[0] * self.frame_stacks)
+                            self.map_tracker_height + self.mem_padding + 
+                            self.gs_observation_height)
 
-        # Width of the observation space
-        self.output_full = (obs_height, self.lowres_frame_shape[1], self.lowres_frame_shape[2])
+        # Height of the observation space (max height of either side)
+        obs_height = max(right_side_height, self.lowres_frame_shape[0] * self.frame_stacks)
+
+        # Width of the observation space (recent frames width + right side width e.g. Map Tracker)
+        obs_width = self.lowres_frame_shape[1] + self.lowres_frame_shape[1]
+        self.output_full = (obs_height, obs_width, self.lowres_frame_shape[2])
         self.observation_space = spaces.Box(low=0, high=255, shape=self.output_full, dtype=np.uint8)
 
 
@@ -233,7 +239,7 @@ class RedGymEnv(Env):
             scale = self.reward_scale * 0.1,
             rew_config = {
                 'event': RewardCfg(reward_per_value = 4),
-                'level': RewardCfg(reward_per_value = 2.0, base_value = 6),
+                'level': RewardCfg(reward_per_value = 2.5, base_value = 6),
                 'heal': RewardCfg(reward_per_value = 4),
                 'op_lvl': RewardCfg(reward_per_value = 0.2),
                 'dead': RewardCfg(reward_per_value = -0.1),
@@ -311,21 +317,61 @@ class RedGymEnv(Env):
             y,
         )
 
+        # Get Party
+        party_obs = None
+        party: Party = self.state_tracker.curr('party_pokemon_data')
+        if party:
+            party_obs = party.render_observation_8bit_rgb()
+        else:
+            party_obs = np.zeros((*Party.observation_size, 3), dtype=np.uint8)
+
+        # Split the gs_observation in half on axis 1 and stack them
+        split_index = party_obs.shape[1] // 2
+        party_obs_top = party_obs[:, :split_index, :]
+        party_obs_bottom = party_obs[:, split_index:, :]
+        party_obs_stacked = np.concatenate((party_obs_top, party_obs_bottom), axis=0)
+
+
+        # Check and pad gs_observation_stacked if necessary
+        party_obs_width = party_obs_stacked.shape[1]
+        target_width = self.lowres_frame_shape[1]
+        if party_obs_width < target_width:
+            pad_width = (target_width - party_obs_width) // 2
+            padding = np.zeros((party_obs_stacked.shape[0], pad_width, 3), dtype=np.uint8)
+            party_obs_stacked = np.concatenate((padding, party_obs_stacked, padding), axis=1)
+
+            # If the padding doesn't divide evenly, add extra padding on the right
+            if party_obs_stacked.shape[1] < target_width:
+                extra_padding = np.zeros((party_obs_stacked.shape[0], 1, 3), dtype=np.uint8)
+                party_obs_stacked = np.concatenate((party_obs_stacked, extra_padding), axis=1)
+
+
         # Padding
         pad = np.zeros(shape=(self.mem_padding, self.lowres_frame_shape[1], 3), dtype=np.uint8)
 
-        # Combine components
-        combined_view = np.concatenate(
+        # Combine components vertically for the right side
+        right_side = np.concatenate(
             (
+                map_tracker_view,
+                pad,
                 self.render_bars_lvl_hp_exlore(),
                 pad,
                 self.recent_reward_memory.render_observation(),
                 pad,
-                map_tracker_view,
-                pad,
-                *self.recent_frames
+                party_obs_stacked
             ),
             axis=0)
+
+        # Rearrange the recent frames for the left side
+        left_side = rearrange(self.recent_frames, 'f h w c -> (f h) w c')
+
+        # Ensure that the left and right sides are of the same height
+        max_height = max(left_side.shape[0], right_side.shape[0])
+        left_side = np.pad(left_side, ((0, max_height - left_side.shape[0]), (0, 0), (0, 0)), mode='constant')
+        right_side = np.pad(right_side, ((0, max_height - right_side.shape[0]), (0, 0), (0, 0)), mode='constant')
+
+        # Concatenate left and right sides horizontally
+        combined_view = np.concatenate((left_side, right_side), axis=1)
 
         return combined_view
 
@@ -401,6 +447,10 @@ class RedGymEnv(Env):
         # Register party pokemon
         party_pokemon = tuple(self.read_m(addr) for addr in [0xD164, 0xD165, 0xD166, 0xD167, 0xD168, 0xD169])
         self.state_tracker.register_value('party_pokemon', party_pokemon)
+
+        # Register party pokemon
+        party_pokemon_data = Party(self.read_m)
+        self.state_tracker.register_value('party_pokemon_data', party_pokemon_data)
 
         # Register party levels
         party_levels = tuple(max(self.read_m(addr), 0) for addr in [0xD18C, 0xD1B8, 0xD1E4, 0xD210, 0xD23C, 0xD268])
