@@ -194,8 +194,8 @@ class MapTracker:
 
         # If the map_id does not exist, return the empty view
         if map_id not in self._maps.keys():
-            print(f"Map ID {map_id} not found. Returning empty view.")
-            return view
+            print(f"Warning: Map ID {map_id} not found. Returning empty view.")
+            return np.zeros((view_height * scale, view_width * scale, 3))
 
         # Make sure waiting decay stacks are applied
         self._apply_stacked_decay(map_id)
@@ -206,7 +206,7 @@ class MapTracker:
         
         slices = self._crop_map_view_slices_to_bounds(view_size, (view_center_x, view_center_y), (map_max_x, map_max_y), (x, y))
         if slices is None:
-            return view
+            return np.zeros((view_height * scale, view_width * scale, 3))
         else:
             ((x1_view, y1_view, x2_view, y2_view),
             (x1_map, y1_map, x2_map, y2_map)) = slices
