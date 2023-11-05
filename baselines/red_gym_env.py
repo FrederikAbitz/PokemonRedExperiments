@@ -561,7 +561,7 @@ class RedGymEnv(Env):
             'ptypes': self.state_tracker.curr('party_pokemon'),
             'hp': self.state_tracker.curr('party_hp_fraction'),
             'deaths': self.died_count,
-            'badge': self.state_tracker.metric('badges', 'earned'),
+            'badge': sum(self.state_tracker.curr('badges')),
             'event': self.rewards.total_reward('event'),
             'healr': self.rewards.total_reward('heal')
         }
