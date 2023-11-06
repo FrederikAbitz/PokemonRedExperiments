@@ -213,6 +213,8 @@ class RedGymEnv(Env):
             'party_hp_curr': ValueCfg(data_type=tuple),
             'party_hp_fraction': ValueCfg(data_type=float),
             'badges': ValueCfg(data_type=tuple, default_value=([False] * 8)),
+            'pokedex_seen': ValueCfg(data_type=np.ndarray, default_value=(np.zeros((152), dtype=bool))),
+            'pokedex_own': ValueCfg(data_type=np.ndarray, default_value=(np.zeros((152), dtype=bool))),
         })
 
         # Recent Reward Memory
@@ -240,7 +242,9 @@ class RedGymEnv(Env):
             scale = self.reward_scale * 0.1,
             rew_config = {
                 'event': RewardCfg(reward_per_value = 4),
-                'level': RewardCfg(reward_per_value = 2.5, base_value = 6),
+                'pokedex_seen': RewardCfg(reward_per_value = 1),
+                'pokedex_own': RewardCfg(reward_per_value = 2),
+                'level': RewardCfg(reward_per_value = 4.0, base_value = 6),
                 'heal': RewardCfg(reward_per_value = 4),
                 'op_lvl': RewardCfg(reward_per_value = 0.2),
                 'dead': RewardCfg(reward_per_value = -0.1),
@@ -326,14 +330,14 @@ class RedGymEnv(Env):
         else:
             party_obs = np.zeros((*Party.observation_size, 3), dtype=np.uint8)
 
-        # Split the gs_observation in half on axis 1 and stack them
+        # Split the party_obs in half on axis 1 and stack them
         split_index = party_obs.shape[1] // 2
         party_obs_top = party_obs[:, :split_index, :]
         party_obs_bottom = party_obs[:, split_index:, :]
         party_obs_stacked = np.concatenate((party_obs_top, party_obs_bottom), axis=0)
 
 
-        # Check and pad gs_observation_stacked if necessary
+        # Check and pad party_obs_stacked if necessary
         party_obs_width = party_obs_stacked.shape[1]
         target_width = self.lowres_frame_shape[1]
         if party_obs_width < target_width:
@@ -346,6 +350,12 @@ class RedGymEnv(Env):
                 extra_padding = np.zeros((party_obs_stacked.shape[0], 1, 3), dtype=np.uint8)
                 party_obs_stacked = np.concatenate((party_obs_stacked, extra_padding), axis=1)
 
+        # Generate Pokedex observation
+        pokedex_obs, (p_height, p_width) = self.render_pokedex(width=40)
+        # Check if the width matches the party_obs_stacked, if not, pad it
+        if p_width < party_obs_stacked.shape[1]:
+            pad_width = party_obs_stacked.shape[1] - p_width
+            pokedex_obs = np.pad(pokedex_obs, ((0, 0), (0, pad_width), (0, 0)), mode='constant', constant_values=0)
 
         # Padding
         pad = np.zeros(shape=(self.mem_padding, self.lowres_frame_shape[1], 3), dtype=np.uint8)
@@ -359,7 +369,9 @@ class RedGymEnv(Env):
                 pad,
                 self.recent_reward_memory.render_observation(),
                 pad,
-                party_obs_stacked
+                party_obs_stacked,
+                pad,
+                pokedex_obs
             ),
             axis=0)
 
@@ -426,6 +438,43 @@ class RedGymEnv(Env):
         return full_memory
 
 
+    def render_pokedex(self, height: int = None, width: int = None) -> np.ndarray:
+        # Get the seen and owned status as NumPy arrays
+        pokedex_seen = self.state_tracker.curr('pokedex_seen', np.zeros((152), dtype=bool))
+        pokedex_own = self.state_tracker.curr('pokedex_own', np.zeros((152), dtype=bool))
+
+        # Calculate the R channel based on the Pokedex ID
+        ids = np.arange(1, 153, dtype=np.uint8)
+
+        # Calculate the G channel based on owned status (True -> 250, False -> 50)
+        own = np.where(pokedex_own, 250, 50)
+
+        # Calculate the B channel based on seen status (True -> 250, False -> 50)
+        seen = np.where(pokedex_seen, 250, 50)
+
+        # If only one dimension is provided, calculate the other
+        if height is not None and width is None:
+            width = (152 + height - 1) // height
+        elif width is not None and height is None:
+            height = (152 + width - 1) // width
+        elif height is None and width is None:
+            height, width = 1, 152  # Defaults to all Pokedex entries in a single column
+
+        # Preallocate the observation array with the calculated dimensions
+        observation = np.zeros((height * width, 3), dtype=np.uint8)
+
+        # Set the RGB channels
+        observation[:152, 0] = ids
+        observation[:152, 1] = own
+        observation[:152, 2] = seen
+
+        # Reshape the observation to the 2D dimensions if required
+        if height is not None or width is not None:
+            observation = observation.reshape((height, width, 3))
+
+        return observation, (height, width)
+
+
     def register_emulator_values(self):
         # Register the player's position
         x_pos = self.read_m(0xD362)
@@ -482,6 +531,26 @@ class RedGymEnv(Env):
         badges = tuple((badge_byte & (1 << i)) != 0 for i in range(8))
         self.state_tracker.register_value('badges', badges)
 
+        # Pokedex
+        pokedex_seen = np.zeros(152, dtype=bool)
+        pokedex_own = np.zeros(152, dtype=bool)
+
+        # Helper function to populate the pokedex arrays
+        def set_status(array, byte, offset):
+            for i in range(8):
+                array[offset + i] = (byte & (1 << i)) != 0
+
+        # Read and set the seen and own status
+        for i in range(19):  # There are 19 bytes for 152 Pokémon (8 Pokémon per byte)
+            seen_byte = self.read_m(0xD30A + i)
+            set_status(pokedex_seen, seen_byte, i * 8)
+
+            own_byte = self.read_m(0xD2F7 + i)
+            set_status(pokedex_own, own_byte, i * 8)
+
+        self.state_tracker.register_value('pokedex_seen', pokedex_seen)
+        self.state_tracker.register_value('pokedex_own', pokedex_own)
+
 
     def calculate_rewards(self):
         # Event reward
@@ -508,6 +577,10 @@ class RedGymEnv(Env):
 
         # Badge reward
         self.rewards.register_absolute('badge', sum(self.state_tracker.curr("badges")))
+
+        # Pokedex rewards
+        self.rewards.register_absolute('pokedex_seen', sum(self.state_tracker.curr('pokedex_seen')))
+        self.rewards.register_absolute('pokedex_own', sum(self.state_tracker.curr('pokedex_own')))
 
         # Healing and death reward
         old_health = self.state_tracker.prev('party_hp_fraction', 1.0)
