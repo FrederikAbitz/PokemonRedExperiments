@@ -3,6 +3,7 @@ import numpy as np
 
 from typing import Callable, Optional
 
+import obs_utils
 from PokemonType import PokemonType
 
 
@@ -139,8 +140,8 @@ class PartyPokemon:
         """
         Size of the observation array.
         """
-        # Updated to a 12x8 pixel array.
-        return (8, 12)
+        # Keep 8x10 reserved for changes in reprentation
+        return (8, 10)
 
 
     def render_observation_8bit_rgb(self) -> np.ndarray:
@@ -154,55 +155,53 @@ class PartyPokemon:
             if self.nr & (1 << i):
                 observation[i, 0, 1] = 255
 
-        # Render HP (Progress Bar)
-        hp_ratio = self.hp / (self.max_hp + 1)
-        hp_pixels = int(hp_ratio * 8)
-        observation[:hp_pixels, 1, 1] = 255
-
-        # Render Level (Progress Bar)
-        level_pixels = int(self.level / 10)
-        observation[:level_pixels, 2, 1] = 255
-
-        # Render Experience (Progress Bar)
-        # Assuming slow leveling group
-        exp_max = int(5 * pow(self.level + 1.0, 3) / 4)
-        exp_ratio = self.exp / exp_max
-        exp_pixels = int(exp_ratio * 8)
-        observation[:exp_pixels, 3, 1] = 255
-
-        # Render Status Effects
-        if self.paralyzed:
-            observation[0, 4, 1] = 255
-        if self.frozen:
-            observation[1, 4, 1] = 255
-        if self.burned:
-            observation[2, 4, 1] = 255
-        if self.poisoned:
-            observation[3, 4, 1] = 255
-        # Sleep counter could be represented as different intensities.
-
         # Render Types (One-Hot Encoding)
         type_encoded = type_to_one_hot_8pxcol_2ch(self.type1)
         if self.type2 is not None:
             type2_encoded = type_to_one_hot_8pxcol_2ch(self.type2)
             type_encoded = np.bitwise_or(type_encoded, type2_encoded)
-        observation[:, 5, 1:] = type_encoded
+        observation[:, 1, 1:] = type_encoded
 
-        self._render_stat_property(observation, 6, self.max_hp, 160)
-        self._render_stat_property(observation, 7, self.attack, 160)
-        self._render_stat_property(observation, 8, self.defense, 160)
-        self._render_stat_property(observation, 9, self.speed, 160)
-        self._render_stat_property(observation, 10, self.special, 160)
+        # Render Level and Experience (Fading Progress Bars on R and G channels)
+        level_max = 100  # Assuming the maximum level is 100
+        exp_max = int(5 * pow(self.level + 1.0, 3) / 4)  # Assuming slow leveling group
+        obs_utils.render_progress_bar(observation, self.level, level_max, 0, 2, 0)
+        obs_utils.render_progress_bar(observation, self.exp, exp_max, 0, 2, 1)
 
-        # Render Moves (Binary Encoding or Categorization)
-        # TODO
+        # Render HP and Max HP (Fading Progress Bars on R and B channels)
+        stat_max = 160  # Assuming a stat maximum of 160, should be good for lvl <= 50
+        obs_utils.render_progress_bar(observation, self.hp, self.max_hp, 0, 3, 0)
+        obs_utils.render_progress_bar(observation, self.max_hp, stat_max, 0, 3, 2)
+
+        # Render Attack and Defense (Fading Progress Bars on R and G channels)
+        obs_utils.render_progress_bar(observation, self.attack, stat_max, 0, 4, 0)
+        obs_utils.render_progress_bar(observation, self.defense, stat_max, 0, 4, 1)
+
+        # Render Speed and Special (Fading Progress Bars on G and B channels)
+        obs_utils.render_progress_bar(observation, self.speed, stat_max, 0, 5, 1)
+        obs_utils.render_progress_bar(observation, self.special, stat_max, 0, 5, 2)
+
+        # Render Status Effects
+        if self.paralyzed:
+            observation[0, 6, 1] = 255
+        if self.frozen:
+            observation[1, 6, 1] = 255
+        if self.burned:
+            observation[2, 6, 1] = 255
+        if self.poisoned:
+            observation[3, 6, 1] = 255
+        if self.sleep_counter > 0:
+            observation[4, 6, 1] = 255
+        # Render Sleep counter as a progress bar in the same column
+        sleep_max = 7
+        obs_utils.render_progress_bar(observation, self.sleep_counter, sleep_max, 5, 6, 1, height=3)
+
+        # Moves
+        move_column = 7
+        for i, (move_id, current_pp) in enumerate(zip(self.moves, self.pp)):
+            if move_id == 0 or move_id > 0xa5:
+                continue # Empty or illegal
+            row = i * 2  # Each move takes up 2 rows
+            obs_utils.render_move_data(observation, move_id, current_pp, row, move_column)
 
         return observation
-
-    def _render_stat_property(self, observation, column, value, max_value):
-        """
-        Renders a stat property as a progress bar in the observation.
-        """
-        stat_ratio = value / max_value
-        stat_pixels = int(stat_ratio * 8)
-        observation[:stat_pixels, column, 1] = 255
