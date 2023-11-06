@@ -96,6 +96,7 @@ class RedGymEnv(Env):
         self.early_stopping = config['early_stop']
         self.save_video = config['save_video']
         self.save_video_framebuffer_size = 600
+        self.save_video_min_frames_to_create = 600
         self.video_interval = 256 * self.act_freq
         self.downsample_factor = 2
         """Factor by which the PyBoy frames are downsampled along width and height"""
@@ -638,7 +639,7 @@ class RedGymEnv(Env):
             self.model_frame_buffer.append(frame_small)
 
             # Write to file when episode over or buffer full
-            if done_ep_is_over or len(self.full_frame_buffer) >= self.save_video_framebuffer_size:
+            if (done_ep_is_over and self.step_count >= self.save_video_min_frames_to_create) or len(self.full_frame_buffer) >= self.save_video_framebuffer_size:
                 while self.full_frame_buffer:
                     self.full_frame_writer.add_image(self.full_frame_buffer.popleft())
                 while self.model_frame_buffer:
