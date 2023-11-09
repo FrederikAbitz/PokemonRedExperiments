@@ -147,7 +147,7 @@ if __name__ == '__main__':
             done = [False] * n_envs
             _step = 0
             while not all(done):
-                action, _states = model.predict(obs, deterministic=(_step > 1024))
+                action, _states = model.predict(obs, deterministic=False)
                 obs, rewards, done, info = env.step(action)
                 _step += 1
     else:
