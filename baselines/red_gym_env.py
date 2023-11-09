@@ -98,6 +98,7 @@ class RedGymEnv(Env):
         self.save_video_framebuffer_size = 600
         self.save_video_min_frames_to_create = 600
         self.video_interval = 256 * self.act_freq
+        self.stat_interval = 10 if 'stat_interval' not in config else config['stat_interval']
         self.downsample_factor = 2
         """Factor by which the PyBoy frames are downsampled along width and height"""
         self.frame_stacks = 3
@@ -204,17 +205,34 @@ class RedGymEnv(Env):
             'pos': ValueCfg(data_type=tuple, default_value=(0, 0)),
             'map_id': ValueCfg(data_type=int, default_value=0),
             'money': ValueCfg(data_type=int),
+            'party_pokemon_data': ValueCfg(data_type=Party, metrics={
+                'atk_l2norm': lambda curr, prev, metric_prev, count: sqrt(sum([pkmn.attack**2 for pkmn in curr.pkmn])),
+                'def_l2norm': lambda curr, prev, metric_prev, count: sqrt(sum([pkmn.defense**2 for pkmn in curr.pkmn])),
+                'spd_l2norm': lambda curr, prev, metric_prev, count: sqrt(sum([pkmn.speed**2 for pkmn in curr.pkmn])),
+                'spc_l2norm': lambda curr, prev, metric_prev, count: sqrt(sum([pkmn.special**2 for pkmn in curr.pkmn])),
+                'atk_max': lambda curr, prev, metric_prev, count: max([pkmn.attack for pkmn in curr.pkmn]),
+                'def_max': lambda curr, prev, metric_prev, count: max([pkmn.defense for pkmn in curr.pkmn]),
+                'spd_max': lambda curr, prev, metric_prev, count: max([pkmn.speed for pkmn in curr.pkmn]),
+                'spc_max': lambda curr, prev, metric_prev, count: max([pkmn.special for pkmn in curr.pkmn]),
+                }),
             'party_size': ValueCfg(data_type=int, metrics={
                 'changed?': lambda curr, prev, metric_prev, count: curr != prev
                 }),
-            'party_levels': ValueCfg(data_type=tuple),
+            'party_levels': ValueCfg(data_type=tuple, metrics={
+                'l2norm': lambda curr, prev, metric_prev, count: sqrt(sum([lvl**2 for lvl in curr])),
+                'max': lambda curr, prev, metric_prev, count: max([lvl for lvl in curr]),
+                }),
             'opponent_party_levels': ValueCfg(data_type=tuple, default_value=5),
             'party_hp_max': ValueCfg(data_type=tuple),
             'party_hp_curr': ValueCfg(data_type=tuple),
             'party_hp_fraction': ValueCfg(data_type=float),
             'badges': ValueCfg(data_type=tuple, default_value=([False] * 8)),
-            'pokedex_seen': ValueCfg(data_type=np.ndarray, default_value=(np.zeros((152), dtype=bool))),
-            'pokedex_own': ValueCfg(data_type=np.ndarray, default_value=(np.zeros((152), dtype=bool))),
+            'pokedex_seen': ValueCfg(data_type=np.ndarray, default_value=(np.zeros((152), dtype=bool)), metrics={
+                'sum': lambda curr, prev, metric_prev, count: sum(curr)
+                }),
+            'pokedex_own': ValueCfg(data_type=np.ndarray, default_value=(np.zeros((152), dtype=bool)), metrics={
+                'sum': lambda curr, prev, metric_prev, count: sum(curr)
+                }),
         })
 
         # Recent Reward Memory
@@ -244,10 +262,10 @@ class RedGymEnv(Env):
                 'event': RewardCfg(reward_per_value = 4),
                 'pokedex_seen': RewardCfg(reward_per_value = 1),
                 'pokedex_own': RewardCfg(reward_per_value = 2),
-                'level': RewardCfg(reward_per_value = 4.0, base_value = 6),
+                'levels_l2norm': RewardCfg(reward_per_value = 4.0, base_value = 6),
                 'heal': RewardCfg(reward_per_value = 4),
                 'op_lvl': RewardCfg(reward_per_value = 0.2),
-                'dead': RewardCfg(reward_per_value = -0.1),
+                'dead': RewardCfg(reward_per_value = -0.2),
                 'badge': RewardCfg(reward_per_value = 20),
                 'explore_pos': RewardCfg(reward_per_value = 4 * self.explore_reward_scale),
                 'explore_knn': RewardCfg(reward_per_value = 4 * self.explore_reward_scale),
@@ -560,8 +578,8 @@ class RedGymEnv(Env):
         # self.rewards.register_absolute('hp_fraction', self.state_tracker.curr('party_hp_fraction'))
 
         # Levels reward
-        levels_reward = sqrt(sum([lvl**2 for lvl in self.state_tracker.curr('party_levels')]))
-        self.rewards.register_absolute('level', levels_reward)
+        levels_reward = self.state_tracker.metric('party_levels', 'l2norm')
+        self.rewards.register_absolute('levels_l2norm', levels_reward)
 
         # Max opponent level reward
         opponent_level = max(self.state_tracker.curr('opponent_party_levels')) - 5
@@ -579,8 +597,8 @@ class RedGymEnv(Env):
         self.rewards.register_absolute('badge', sum(self.state_tracker.curr("badges")))
 
         # Pokedex rewards
-        self.rewards.register_absolute('pokedex_seen', sum(self.state_tracker.curr('pokedex_seen')))
-        self.rewards.register_absolute('pokedex_own', sum(self.state_tracker.curr('pokedex_own')))
+        self.rewards.register_absolute('pokedex_seen', self.state_tracker.metric('pokedex_seen', 'sum'))
+        self.rewards.register_absolute('pokedex_own', self.state_tracker.metric('pokedex_own', 'sum'))
 
         # Healing and death reward
         old_health = self.state_tracker.prev('party_hp_fraction', 1.0)
@@ -614,7 +632,7 @@ class RedGymEnv(Env):
         ### Read from emulator and update cache
 
         # Screen
-        self.pixels = self.screen.screen_ndarray()  # (144, 160, 3)
+        self.pixels[:] = self.screen.screen_ndarray()[:]  # (144, 160, 3)
 
         # Update rolling frame buffer
         self.recent_frames = np.roll(self.recent_frames, 1, axis=0)
@@ -668,33 +686,51 @@ class RedGymEnv(Env):
 
         ### Statistics, Logging, Housekeeping, Any Extra Functionality
 
-        # Update agent stats
-        agent_stats = {
-            'step': self.step_count,
-            'x': self.state_tracker.curr('pos')[0],
-            'y': self.state_tracker.curr('pos')[1],
-            'map': self.state_tracker.curr('map_id'),
-            'map_location': MAP_LOCATIONS.get(self.state_tracker.curr('map_id'), "Unknown Location"),
-            'last_action': action,
-            'pcount': self.state_tracker.curr('party_size'),
-            'levels': self.state_tracker.curr('party_levels'),
-            'levels_sum': sum(self.state_tracker.curr('party_levels')),
-            'ptypes': self.state_tracker.curr('party_pokemon'),
-            'hp': self.state_tracker.curr('party_hp_fraction'),
-            'deaths': self.died_count,
-            'badge': sum(self.state_tracker.curr('badges')),
-            'event': self.rewards.total_reward('event'),
-            'healr': self.rewards.total_reward('heal')
-        }
-        if self.use_knn_exploration_reward:
-            agent_stats['frames'] = self.knn_exploration_rewarder.get_current_count()
-        if self.use_position_exploration_reward:
-            agent_stats['coord_count'] = self.position_exploration_rewarder.get_visited_cell_count()
-
-        self.agent_stats.append(agent_stats)
-
-
         done_ep_is_over = self.check_if_done()
+
+
+        # Update agent stats
+        if done_ep_is_over or self.step_count % self.stat_interval == 0:
+            agent_stats = {
+                'step': self.step_count,
+                'map': self.state_tracker.curr('map_id'),
+                'map_location': MAP_LOCATIONS.get(self.state_tracker.curr('map_id'), "Unknown Location"),
+                'x': self.state_tracker.curr('pos')[0],
+                'y': self.state_tracker.curr('pos')[1],
+                'last_action': action,
+                'deaths': self.died_count,
+                'game_progress': {
+                    'badge': sum(self.state_tracker.curr('badges')),
+                    'pokedex_seen': self.state_tracker.metric('pokedex_seen', 'sum'),
+                    'pokedex_own': self.state_tracker.metric('pokedex_own', 'sum'),
+                },
+                'exploration': {
+                    'coord_count': self.position_exploration_rewarder.get_visited_cell_count() if self.use_position_exploration_reward else None,
+                    'frames': self.knn_exploration_rewarder.get_current_count() if self.use_knn_exploration_reward else None,
+                },
+                'party': {
+                    'party_size': self.state_tracker.curr('party_size'),
+                    'party_types': self.state_tracker.curr('party_pokemon'),
+                    'hp_fraction': self.state_tracker.curr('party_hp_fraction'),
+                    'levels': self.state_tracker.curr('party_levels'),
+                    'levels_sum': sum(self.state_tracker.curr('party_levels')),
+                    'levels_l2norm': self.state_tracker.metric('party_levels', 'l2norm'),
+                    'levels_max': self.state_tracker.metric('party_levels', 'max'),
+                    'atk_l2norm': self.state_tracker.metric('party_pokemon_data', 'atk_l2norm'),
+                    'def_l2norm': self.state_tracker.metric('party_pokemon_data', 'def_l2norm'),
+                    'spd_l2norm': self.state_tracker.metric('party_pokemon_data', 'spd_l2norm'),
+                    'spc_l2norm': self.state_tracker.metric('party_pokemon_data', 'spc_l2norm'),
+                    'atk_max': self.state_tracker.metric('party_pokemon_data', 'atk_max'),
+                    'def_max': self.state_tracker.metric('party_pokemon_data', 'def_max'),
+                    'spd_max': self.state_tracker.metric('party_pokemon_data', 'spd_max'),
+                    'spc_max': self.state_tracker.metric('party_pokemon_data', 'spc_max'),
+                },
+                'reward': {
+                    'all_sum': self.rewards.total_reward()
+                    } | self.rewards.total_rewards(),
+            }
+
+            self.agent_stats.append(agent_stats)
 
         # Save Screenshot if reward went down without dying
         if sum(self.rewards.step_values().values()) < 0 and self.rewards.step_value('dead') == 0:
@@ -704,7 +740,7 @@ class RedGymEnv(Env):
 
         # Save Video
         if self.save_video:
-            frame_full = self.screen.screen_ndarray()
+            frame_full = self.get_pixels(reduce_res = False)
             frame_small = obs
 
             # Add frames to buffer
