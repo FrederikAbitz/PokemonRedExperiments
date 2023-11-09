@@ -264,7 +264,7 @@ class RedGymEnv(Env):
 
     def reset(self, seed=None):
         self.seed = seed
-        self.pixels = np.zeros((*self.screen.raw_screen_buffer_dims(), 3))
+        self.pixels = np.zeros((*self.screen.raw_screen_buffer_dims(), 3), dtype=np.uint8)
         self.map_tracker.reset()
         self.state_tracker.reset()
         self.recent_reward_memory.reset()
